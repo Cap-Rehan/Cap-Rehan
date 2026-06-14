@@ -13,3 +13,5 @@ Projects, experiments, notes, and whatever I'm currently learning.
 
 - Cinema lover
 > "There is some good in this world, and it's worth fighting for."
+
+![Snake animation](https://github.com/Cap-Rehan/Cap-Rehan/blob/output/github-contribution-grid-snake.svg)
