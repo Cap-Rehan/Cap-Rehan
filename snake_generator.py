@@ -1,199 +1,385 @@
 #!/usr/bin/env python3
 """
-Growing GitHub Contribution Snake
-The snake gains +1 length every time it eats a contribution cell.
-Outputs light + dark mode SVGs using SMIL <animate> elements.
+Growing GitHub Contribution Snake Generator
+- AI pathfinding: The snake hunts down contribution dots across the grid.
+- Dynamic growth: Snake increases in length (+1 segment) each time it eats a contribution.
+- High-contrast vibrant themes: Distinct cyan/blue snake palettes clearly distinguishable from green contribution tiles.
+- Clean SMIL keyframe animations: Indefinite loop with pause, optimized for GitHub READMEs.
 """
 
+import json
 import os
-import requests
+import re
+import urllib.request
+from collections import deque
 
 USERNAME = "Cap-Rehan"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
-# ── Data fetching ──────────────────────────────────────────────────────────────
+# ── Data Fetching ─────────────────────────────────────────────────────────────
 
-def fetch_grid():
-    """Return contribution counts as list-of-columns (grid[col][row] = count)."""
-    query = """
-    query($user: String!) {
-      user(login: $user) {
-        contributionsCollection {
-          contributionCalendar {
-            weeks {
-              contributionDays { contributionCount }
+def fetch_grid(username: str = USERNAME, token: str = GITHUB_TOKEN) -> list[list[int]]:
+    """
+    Fetch contribution counts as a list-of-columns: grid[col][row] = count.
+    Uses GitHub GraphQL API if token is provided, otherwise falls back to public profile scraper.
+    """
+    if token:
+        try:
+            print(f"Fetching contribution data via GraphQL API for @{username}...")
+            query = """
+            query($user: String!) {
+              user(login: $user) {
+                contributionsCollection {
+                  contributionCalendar {
+                    weeks {
+                      contributionDays { contributionCount }
+                    }
+                  }
+                }
+              }
             }
-          }
-        }
-      }
-    }
+            """
+            req = urllib.request.Request(
+                "https://api.github.com/graphql",
+                data=json.dumps({"query": query, "variables": {"user": username}}).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "GitHub-Snake-Generator/2.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if "errors" in data:
+                    print(f"GraphQL warning: {data['errors']}")
+                else:
+                    weeks = (
+                        data["data"]["user"]["contributionsCollection"]
+                        ["contributionCalendar"]["weeks"]
+                    )
+                    return [[d["contributionCount"] for d in w["contributionDays"]] for w in weeks]
+        except Exception as err:
+            print(f"GraphQL request failed ({err}), attempting public fallback...")
+
+    # Fallback: scrape public profile contribution calendar
+    try:
+        print(f"Fetching contribution data via public profile for @{username}...")
+        url = f"https://github.com/users/{username}/contributions"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8")
+            matches = re.findall(r'data-date="[^"]+"[^>]*data-level="(\d+)"', html)
+            if matches:
+                weeks = []
+                for i in range(0, len(matches), 7):
+                    chunk = matches[i:i + 7]
+                    weeks.append([int(lvl) for lvl in chunk])
+                return weeks
+    except Exception as err:
+        print(f"Public profile fetch failed ({err}). Using fallback grid.")
+
+    # Ultimate fallback: 53 weeks x 7 days sample grid
+    print("Generating default contribution grid...")
+    grid = [[0] * 7 for _ in range(53)]
+    for w in range(5, 50, 3):
+        grid[w][w % 7] = (w % 4) + 1
+        grid[w][(w + 2) % 7] = ((w * 2) % 4) + 1
+    return grid
+
+
+# ── AI Snake Simulation ───────────────────────────────────────────────────────
+
+def simulate_snake(grid: list[list[int]], init_length: int = 4):
     """
-    resp = requests.post(
-        "https://api.github.com/graphql",
-        json={"query": query, "variables": {"user": USERNAME}},
-        headers={"Authorization": f"Bearer {GITHUB_TOKEN}"},
-        timeout=30,
+    Simulates the snake hunting down contribution dots across the GitHub calendar grid.
+    The snake starts at (0, 0) and grows +1 segment whenever it eats a contribution cell.
+    Returns:
+        history: list of (body_snapshot, eaten_foods_set) for each step t
+        ncols, nrows
+    """
+    ncols = len(grid)
+    nrows = max(len(c) for c in grid)
+
+    # Collect all non-zero contribution cells as food
+    foods = set(
+        (c, r)
+        for c in range(ncols)
+        for r in range(len(grid[c]))
+        if grid[c][r] > 0
     )
-    resp.raise_for_status()
-    payload = resp.json()
-    if "errors" in payload:
-        raise RuntimeError(f"GraphQL errors: {payload['errors']}")
-    weeks = (
-        payload["data"]["user"]
-        ["contributionsCollection"]["contributionCalendar"]["weeks"]
-    )
-    return [[d["contributionCount"] for d in w["contributionDays"]] for w in weeks]
+    initial_food_count = len(foods)
+
+    # Initialize snake
+    start_pos = (0, 0)
+    body = deque([start_pos] * init_length)
+    history: list[tuple[list[tuple[int, int]], set[tuple[int, int]]]] = []
+    eaten_foods: set[tuple[int, int]] = set()
+
+    if start_pos in foods:
+        foods.remove(start_pos)
+        eaten_foods.add(start_pos)
+        body.append(start_pos)
+
+    def neighbors(pos: tuple[int, int]) -> list[tuple[int, int]]:
+        c, r = pos
+        res = []
+        for dc, dr in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nc, nr = c + dc, r + dr
+            if 0 <= nc < ncols and 0 <= nr < nrows:
+                res.append((nc, nr))
+        return res
+
+    def get_shortest_path(start: tuple[int, int], targets: set[tuple[int, int]], obstacles: set[tuple[int, int]]) -> list[tuple[int, int]] | None:
+        if not targets:
+            return None
+        queue = deque([(start, [start])])
+        visited = set(obstacles)
+        visited.add(start)
+        while queue:
+            curr, path = queue.popleft()
+            if curr in targets:
+                return path
+            for nxt in neighbors(curr):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, path + [nxt]))
+        return None
+
+    def flood_fill_score(start: tuple[int, int], obstacles: set[tuple[int, int]]) -> int:
+        queue = deque([start])
+        visited = set(obstacles)
+        visited.add(start)
+        count = 0
+        while queue:
+            curr = queue.popleft()
+            count += 1
+            for nxt in neighbors(curr):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        return count
+
+    step = 0
+    max_steps = 2000
+    all_eaten_step = None
+
+    while step < max_steps:
+        # Record frame snapshot
+        history.append((list(body), set(eaten_foods)))
+
+        # Outro handling after all foods are eaten
+        if not foods:
+            if all_eaten_step is None:
+                all_eaten_step = step
+            if step - all_eaten_step >= 28:
+                break
+
+        head = body[0]
+        body_list = list(body)
+        obstacles = set(body_list[:-1])
+
+        next_step = None
+
+        if foods:
+            # 1. Shortest path to closest reachable food
+            path = get_shortest_path(head, foods, obstacles)
+            # Verify that following path doesn't immediately trap snake in tiny dead end
+            if path and len(path) > 1:
+                candidate = path[1]
+                future_obstacles = (obstacles - {body[-1]}) | {candidate}
+                if (
+                    flood_fill_score(candidate, future_obstacles) >= len(body)
+                    or get_shortest_path(candidate, {body[-1]}, future_obstacles) is not None
+                ):
+                    next_step = candidate
+
+            # 2. If direct path is dangerous/blocked, survive by chasing tail
+            if next_step is None:
+                tail_path = get_shortest_path(head, {body[-1]}, obstacles)
+                if tail_path and len(tail_path) > 1:
+                    next_step = tail_path[1]
+
+            # 3. If tail path is also blocked, pick move with maximum open space
+            if next_step is None:
+                valid_moves = [n for n in neighbors(head) if n not in obstacles]
+                if not valid_moves:
+                    valid_moves = neighbors(head)
+                next_step = max(valid_moves, key=lambda n: flood_fill_score(n, obstacles))
+        else:
+            # Outro phase: graceful victory slither towards the right
+            valid_moves = [n for n in neighbors(head) if n not in obstacles]
+            if not valid_moves:
+                valid_moves = neighbors(head)
+            next_step = max(
+                valid_moves,
+                key=lambda n: flood_fill_score(n, obstacles) + n[0] * 0.15
+            )
+
+        if next_step is None:
+            break
+
+        # Move head into next_step
+        new_head = next_step
+        if new_head in foods:
+            # Eat food: cell consumed, snake grows by +1 length (tail is preserved)
+            foods.remove(new_head)
+            eaten_foods.add(new_head)
+            body.appendleft(new_head)
+            if not foods:
+                all_eaten_step = step
+        else:
+            # Normal movement: advance head, remove tail
+            body.appendleft(new_head)
+            body.pop()
+
+        step += 1
+
+    print(f"Simulation completed: {len(history)} steps, {len(eaten_foods)}/{initial_food_count} contributions eaten, final snake length: {len(body)}")
+    return history, ncols, nrows
 
 
-# ── Snake path & growth logic ──────────────────────────────────────────────────
+# ── SVG Rendering ─────────────────────────────────────────────────────────────
 
-def build_path(grid):
-    """Serpentine path visiting every cell (even cols top→bottom, odd cols bottom→top)."""
-    path = []
-    for col_idx, col in enumerate(grid):
-        rng = range(len(col)) if col_idx % 2 == 0 else range(len(col) - 1, -1, -1)
-        for row_idx in rng:
-            path.append((col_idx, row_idx, col[row_idx]))
-    return path
-
-
-def compute_lengths(path, init=4):
-    """
-    Snake length at each step.
-    Starts at `init`. Grows by 1 each time the head steps onto a non-zero cell.
-    """
-    lengths, eaten = [], 0
-    for _, _, cnt in path:
-        lengths.append(init + eaten)
-        if cnt > 0:
-            eaten += 1
-    return lengths
-
-
-def tail_leave_step(j, lengths, n):
-    """
-    Returns the step at which the snake's tail first moves past position j.
-    Returns n if the tail never leaves during this animation cycle.
-    """
-    for i in range(j, n):
-        # at step i, tail is at index  i - lengths[i] + 1
-        if i - lengths[i] + 1 > j:
-            return i
-    return n
-
-
-# ── SVG generation ─────────────────────────────────────────────────────────────
-
-def build_svg(grid, dark=False):
+def build_svg(grid: list[list[int]], history: list[tuple[list[tuple[int, int]], set[tuple[int, int]]]], ncols: int, nrows: int, dark: bool = False) -> str:
     CELL, GAP = 10, 2
     STRIDE = CELL + GAP
     PAD = 5
 
-    ncols = len(grid)
-    nrows = max(len(c) for c in grid)
     W = PAD * 2 + ncols * STRIDE
     H = PAD * 2 + nrows * STRIDE
 
     BG = "#0d1117" if dark else "#ffffff"
+
+    # Standard GitHub Contribution color tiers
     LEVELS = (
         ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"]
         if dark
         else ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"]
     )
-    EMPTY    = LEVELS[0]
-    HEAD_CLR = "#4ade80"   # bright lime – snake head
-    BODY_CLR = "#22c55e"   # medium green – snake body
+    EMPTY_CLR = LEVELS[0]
 
-    def cell_color(cnt):
-        if cnt == 0:   return LEVELS[0]
-        if cnt <= 2:   return LEVELS[1]
-        if cnt <= 5:   return LEVELS[2]
-        if cnt <= 10:  return LEVELS[3]
+    # Contrasting vibrant Snake Palette (Electric Cyan/Blue for Dark, Royal Blue/Indigo for Light)
+    if dark:
+        HEAD_CLR = "#38bdf8"  # Electric Sky Cyan
+        NECK_CLR = "#0ea5e9"  # Vivid Cyan-Blue
+        BODY_CLR = "#0284c7"  # Cobalt Blue
+        TAIL_CLR = "#0369a1"  # Deep Sea Blue
+    else:
+        HEAD_CLR = "#2563eb"  # Royal Blue
+        NECK_CLR = "#3b82f6"  # Vivid Blue
+        BODY_CLR = "#60a5fa"  # Bright Sky Blue
+        TAIL_CLR = "#93c5fd"  # Soft Blue
+
+    def cell_initial_color(cnt: int) -> str:
+        if cnt == 0:
+            return LEVELS[0]
+        if cnt <= 2:
+            return LEVELS[1]
+        if cnt <= 5:
+            return LEVELS[2]
+        if cnt <= 10:
+            return LEVELS[3]
         return LEVELS[4]
 
-    path    = build_path(grid)
-    n       = len(path)
-    lengths = compute_lengths(path, init=4)
+    N = len(history)
+    step_sec = 0.08    # smooth slither speed (80ms per move)
+    pause_sec = 2.4    # pause at end to admire cleared board before looping
+    total_sec = N * step_sec + pause_sec
 
-    step_sec  = 0.06   # seconds per grid step  (lower = faster snake)
-    pause_sec = 2.0    # pause at end before looping
-    total_sec = n * step_sec + pause_sec
-
-    tags = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'viewBox="0 0 {W} {H}" width="{W}" height="{H}">',
-        f'<rect width="{W}" height="{H}" fill="{BG}"/>',
+    svg_lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">',
+        f'  <style>',
+        f'    rect {{ shape-rendering: geometricPrecision; }}',
+        f'  </style>',
+        f'  <rect width="{W}" height="{H}" fill="{BG}" rx="6"/>',
     ]
 
-    for j, (col, row, cnt) in enumerate(path):
-        x  = PAD + col * STRIDE
-        y  = PAD + row * STRIDE
-        bg = cell_color(cnt)
+    # Precalculate cell timeline keyframes
+    for c in range(ncols):
+        for r in range(nrows):
+            cnt = grid[c][r] if r < len(grid[c]) else 0
+            init_clr = cell_initial_color(cnt)
+            x = PAD + c * STRIDE
+            y = PAD + r * STRIDE
 
-        leave_j  = tail_leave_step(j, lengths, n)
-        t_arrive = j * step_sec / total_sec
-        t_body   = (j + 1) * step_sec / total_sec
-        t_leave  = min(leave_j * step_sec / total_sec, 1.0)
-        tiny     = step_sec * 0.004 / total_sec   # epsilon to avoid duplicate keyTimes
+            # Determine color at each step t
+            timeline_colors: list[str] = []
+            for t in range(N):
+                body_list, eaten_set = history[t]
+                if (c, r) == body_list[0]:
+                    timeline_colors.append(HEAD_CLR)
+                elif (c, r) in body_list:
+                    idx = body_list.index((c, r))
+                    if idx <= 2:
+                        timeline_colors.append(NECK_CLR)
+                    elif idx >= len(body_list) - 2:
+                        timeline_colors.append(TAIL_CLR)
+                    else:
+                        timeline_colors.append(BODY_CLR)
+                elif (c, r) in eaten_set:
+                    timeline_colors.append(EMPTY_CLR)
+                else:
+                    timeline_colors.append(init_clr)
 
-        # ── build keyTimes / values lists ────────────────────────────────────
-        kt: list[float] = []
-        vs: list[str]   = []
+            # Compress consecutive identical colors into discrete keyTimes
+            kt: list[float] = [0.0]
+            vs: list[str] = [timeline_colors[0]]
 
-        def push(t: float, v: str):
-            t = max(0.0, min(1.0, t))
-            if not kt or t > kt[-1] + 1e-7:
-                kt.append(t)
-                vs.append(v)
+            for t in range(1, N):
+                if timeline_colors[t] != vs[-1]:
+                    t_frac = (t * step_sec) / total_sec
+                    kt.append(t_frac)
+                    vs.append(timeline_colors[t])
 
-        # Start: show contribution colour (or head immediately for cell 0)
-        if t_arrive < tiny:
-            push(0.0, HEAD_CLR)
-        else:
-            push(0.0, bg)
-            push(t_arrive - tiny, bg)   # hold background just before head
-            push(t_arrive, HEAD_CLR)    # head arrives → bright lime
+            # Hold final state through the pause period until end of cycle (1.0)
+            if kt[-1] < 1.0:
+                kt.append(1.0)
+                vs.append(vs[-1])
 
-        push(t_body, BODY_CLR)          # head moves on → body colour
+            # Generate SMIL <animate> if cell color changes, or static rect if never changed
+            if len(vs) > 2 or (len(vs) == 2 and vs[0] != vs[1]):
+                kt_str = ";".join(f"{k:.4f}" for k in kt)
+                vs_str = ";".join(vs)
+                svg_lines.append(
+                    f'  <rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2" fill="{init_clr}">'
+                    f'<animate attributeName="fill" dur="{total_sec:.3f}s" repeatCount="indefinite" '
+                    f'calcMode="discrete" keyTimes="{kt_str}" values="{vs_str}"/>'
+                    f'</rect>'
+                )
+            else:
+                svg_lines.append(
+                    f'  <rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2" fill="{init_clr}"/>'
+                )
 
-        if leave_j < n:
-            push(t_leave - tiny, BODY_CLR)  # hold body until tail leaves
-            push(t_leave, EMPTY)             # tail leaves → cell eaten
-
-        push(1.0, vs[-1])               # hold last state to end of loop
-
-        kt_str = ";".join(f"{k:.5f}" for k in kt)
-        vs_str = ";".join(vs)
-
-        tags.append(
-            f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2" fill="{bg}">'
-            f'<animate attributeName="fill" dur="{total_sec:.3f}s" '
-            f'repeatCount="indefinite" calcMode="discrete" '
-            f'keyTimes="{kt_str}" values="{vs_str}"/>'
-            f'</rect>'
-        )
-
-    tags.append("</svg>")
-    return "\n".join(tags)
+    svg_lines.append("</svg>")
+    return "\n".join(svg_lines)
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# ── Main Entry Point ──────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def main():
     os.makedirs("dist", exist_ok=True)
 
-    print(f"Fetching contributions for @{USERNAME}...")
-    grid = fetch_grid()
+    grid = fetch_grid(USERNAME, GITHUB_TOKEN)
     total_cells = sum(len(c) for c in grid)
     total_contributions = sum(cnt for col in grid for cnt in col)
-    print(f"  {len(grid)} weeks · {total_cells} cells · {total_contributions} contributions")
+    print(f"Grid loaded: {len(grid)} weeks · {total_cells} cells · {total_contributions} total contributions")
 
-    print("Generating light mode SVG...")
-    with open("dist/github-contribution-grid-snake.svg", "w") as f:
-        f.write(build_svg(grid, dark=False))
+    print("Running Snake AI simulation with dynamic growth...")
+    history, ncols, nrows = simulate_snake(grid, init_length=4)
 
-    print("Generating dark mode SVG...")
-    with open("dist/github-contribution-grid-snake-dark.svg", "w") as f:
-        f.write(build_svg(grid, dark=True))
+    print("Generating Light Theme SVG (dist/github-contribution-grid-snake.svg)...")
+    light_svg = build_svg(grid, history, ncols, nrows, dark=False)
+    with open("dist/github-contribution-grid-snake.svg", "w", encoding="utf-8") as f:
+        f.write(light_svg)
 
-    print("Done! SVGs written to dist/")
+    print("Generating Dark Theme SVG (dist/github-contribution-grid-snake-dark.svg)...")
+    dark_svg = build_svg(grid, history, ncols, nrows, dark=True)
+    with open("dist/github-contribution-grid-snake-dark.svg", "w", encoding="utf-8") as f:
+        f.write(dark_svg)
+
+    print("Success! High-contrast, dynamic growing snake SVGs generated in dist/")
+
+
+if __name__ == "__main__":
+    main()
