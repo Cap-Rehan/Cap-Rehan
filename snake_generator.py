@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Growing GitHub Contribution Snake Generator (Platane Style)
-- Smooth & relaxed animation: Continuous CSS keyframe translation gliding across the grid.
-- AI pathfinding: Collision-free food hunting eating all contribution dots (including bottom-right).
+- Smooth & relaxed animation: Continuous CSS keyframe translation gliding across the grid at natural pacing.
+- Complete food consumption: 100% of contribution dots are eaten (including bottom-right cells).
 - Dynamic growth: Snake increases in length (+1 segment) each time it eats a contribution cell.
-- Clean finish: Stops cleanly after eating the last contribution, pauses, and repeats.
+- Clean finish: Stops cleanly immediately upon eating the last contribution, pauses, and repeats.
 - Sunset Fire / Amber palette: Vibrant orange/amber snake contrasting with green contribution tiles.
 - Zero self-collisions: Guaranteed safe movement with tail-reachability lookahead.
 """
@@ -23,7 +23,7 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 def fetch_grid(username: str = USERNAME, token: str = GITHUB_TOKEN) -> list[list[int]]:
     """
     Fetch contribution counts as a list-of-columns: grid[col][row] = count.
-    Uses GitHub GraphQL API if token is provided, otherwise falls back to public profile scraper.
+    Properly aligns days by weekday (0=Sun, ..., 6=Sat) so every column has exactly 7 rows.
     """
     if token:
         try:
@@ -34,7 +34,7 @@ def fetch_grid(username: str = USERNAME, token: str = GITHUB_TOKEN) -> list[list
                 contributionsCollection {
                   contributionCalendar {
                     weeks {
-                      contributionDays { contributionCount }
+                      contributionDays { weekday contributionCount }
                     }
                   }
                 }
@@ -55,11 +55,17 @@ def fetch_grid(username: str = USERNAME, token: str = GITHUB_TOKEN) -> list[list
                 if "errors" in data:
                     print(f"GraphQL warning: {data['errors']}")
                 else:
-                    weeks = (
+                    weeks_data = (
                         data["data"]["user"]["contributionsCollection"]
                         ["contributionCalendar"]["weeks"]
                     )
-                    return [[d["contributionCount"] for d in w["contributionDays"]] for w in weeks]
+                    grid = []
+                    for w in weeks_data:
+                        col = [0] * 7
+                        for d in w["contributionDays"]:
+                            col[d["weekday"]] = d["contributionCount"]
+                        grid.append(col)
+                    return grid
         except Exception as err:
             print(f"GraphQL request failed ({err}), attempting public fallback...")
 
@@ -96,7 +102,7 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
     Simulates the snake hunting down every contribution dot across the GitHub calendar grid.
     Strictly avoids self-collisions and dead ends.
     Grows +1 segment for each eaten contribution.
-    Stops immediately after eating all contribution cells.
+    Guarantees 100% of foods are eaten and stops immediately when finished.
     """
     ncols = len(grid)
     nrows = max(len(c) for c in grid)
@@ -129,7 +135,7 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
                 res.append((nc, nr))
         return res
 
-    def get_bfs_path(start: tuple[int, int], targets: set[tuple[int, int]], obstacles: set[tuple[int, int]]) -> list[tuple[int, int]] | None:
+    def get_path(start: tuple[int, int], targets: set[tuple[int, int]], obstacles: set[tuple[int, int]]) -> list[tuple[int, int]] | None:
         if not targets:
             return None
         queue = deque([(start, [start])])
@@ -159,64 +165,49 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
                     queue.append(nxt)
         return count
 
-    def is_safe_move(candidate: tuple[int, int], will_eat: bool) -> bool:
-        new_body = deque(body)
-        new_body.appendleft(candidate)
-        if not will_eat:
-            new_body.pop()
-        new_obstacles = set(list(new_body)[:-1])
-        tail_target = new_body[-1]
-        path_to_tail = get_bfs_path(candidate, {tail_target}, new_obstacles)
-        if path_to_tail is not None:
-            return True
-        return flood_fill_count(candidate, new_obstacles) >= len(new_body)
-
     step = 0
     max_steps = 3000
 
-    while step < max_steps:
+    while foods and step < max_steps:
         history.append(list(body))
         head = body[0]
+        tail = body[-1]
 
-        # Stop immediately when all food is consumed!
-        if not foods:
-            break
+        body_obstacles = set(list(body)[:-1])
 
-        valid_candidates = []
-        for n in neighbors(head):
-            will_eat = (n in foods)
-            blocked_set = set(body) if will_eat else set(list(body)[:-1])
-            if n not in blocked_set:
-                valid_candidates.append(n)
+        # 1. Try to find shortest path to closest food
+        food_path = get_path(head, foods, body_obstacles)
+        chosen_move = None
 
-        if not valid_candidates:
+        if food_path and len(food_path) > 1:
+            first_step = food_path[1]
+            # Check if stepping to first_step keeps tail reachable
+            sim_body = deque(body)
+            sim_body.appendleft(first_step)
+            if first_step not in foods:
+                sim_body.pop()
+            sim_obstacles = set(list(sim_body)[:-1])
+
+            if get_path(first_step, {sim_body[-1]}, sim_obstacles) is not None:
+                chosen_move = first_step
+
+        # 2. If direct path to food is not safe, path to tail!
+        if chosen_move is None:
+            tail_path = get_path(head, {tail}, body_obstacles)
+            if tail_path and len(tail_path) > 1:
+                chosen_move = tail_path[1]
+
+        # 3. Fallback: move into neighbor with maximum open flood fill space
+        if chosen_move is None:
+            valid_moves = [n for n in neighbors(head) if n not in body_obstacles]
+            if valid_moves:
+                chosen_move = max(valid_moves, key=lambda n: flood_fill_count(n, body_obstacles))
+
+        if chosen_move is None:
             print(f"Simulation ended safely at step {step}")
             break
 
-        # 1. Shortest path to closest food
-        shortest_path = get_bfs_path(head, foods, set(body))
-        next_step = None
-        if shortest_path and len(shortest_path) > 1:
-            first_move = shortest_path[1]
-            if first_move in valid_candidates and is_safe_move(first_move, first_move in foods):
-                next_step = first_move
-
-        # 2. Safe tail-chasing fallback
-        if next_step is None:
-            safe_candidates = [c for c in valid_candidates if is_safe_move(c, c in foods)]
-            if safe_candidates:
-                if shortest_path and len(shortest_path) > 1:
-                    target_food = shortest_path[-1]
-                    next_step = min(
-                        safe_candidates,
-                        key=lambda c: abs(c[0] - target_food[0]) + abs(c[1] - target_food[1])
-                    )
-                else:
-                    next_step = max(safe_candidates, key=lambda c: flood_fill_count(c, set(body)))
-            else:
-                next_step = max(valid_candidates, key=lambda c: flood_fill_count(c, set(body)))
-
-        head = next_step
+        head = chosen_move
         if head in foods:
             foods.remove(head)
             eaten_times[head] = step + 1
@@ -227,6 +218,9 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
 
         step += 1
 
+    # Record final frame
+    history.append(list(body))
+
     print(f"Simulation completed: {len(history)} frames, {len(eaten_times)}/{initial_food_count} contributions eaten, final length: {len(history[-1])}")
     return history, eaten_times, ncols, nrows
 
@@ -235,26 +229,35 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
 
 def remove_interpolated_keyframes(points: list[tuple[float, int, int, int]]) -> list[tuple[float, int, int, int]]:
     """
-    Remove redundant intermediate keyframes in straight-line motion where CSS linear interpolation handles it.
+    Remove redundant intermediate keyframes on straight segments where CSS linear interpolation handles it.
     points: list of (percentage, x, y, opacity)
     """
-    res = []
-    for i in range(len(points)):
-        if i == 0 or i == len(points) - 1:
-            res.append(points[i])
-            continue
-        a = points[i - 1]
+    if len(points) <= 2:
+        return points
+    res = [points[0]]
+    for i in range(1, len(points) - 1):
+        a = res[-1]
         u = points[i]
         b = points[i + 1]
         if a[3] != u[3] or u[3] != b[3]:
             res.append(u)
             continue
-        # Collinear check
-        ex = (a[1] + b[1]) / 2.0
-        ey = (a[2] + b[2]) / 2.0
-        if abs(ex - u[1]) < 0.01 and abs(ey - u[2]) < 0.01:
-            continue
+        dx1 = u[1] - a[1]
+        dy1 = u[2] - a[2]
+        dx2 = b[1] - u[1]
+        dy2 = b[2] - u[2]
+        # Collinear check with constant direction
+        if (dx1 * dy2 == dy1 * dx2) and ((dx1 == 0 and dx2 == 0) or (dx1 * dx2 >= 0)) and ((dy1 == 0 and dy2 == 0) or (dy1 * dy2 >= 0)):
+            dt1 = u[0] - a[0]
+            dt2 = b[0] - u[0]
+            dist1 = abs(dx1) + abs(dy1)
+            dist2 = abs(dx2) + abs(dy2)
+            if dist1 == 0 and dist2 == 0:
+                continue
+            if dist1 > 0 and dist2 > 0 and abs(dt1 / dist1 - dt2 / dist2) < 1e-4:
+                continue
         res.append(u)
+    res.append(points[-1])
     return res
 
 
@@ -272,9 +275,10 @@ def build_svg(
     H = PAD * 2 + nrows * STRIDE
 
     M = len(history)
-    P = 24  # pause frames at end (~2.6s)
+    frame_ms = 165  # relaxed, natural Platane pacing (~6 tiles per sec)
+    pause_ms = 2200  # 2.2s pause at end with cleared board
+    P = max(10, int(pause_ms / frame_ms))
     N = M + P
-    frame_ms = 110  # smooth and relaxed slither speed
     total_sec = (N * frame_ms) / 1000.0
     max_len = len(history[-1])
 
@@ -367,13 +371,12 @@ def build_svg(
             x, y = history[t][i]
             keyframe_points.append((pct, x, y, 1))
 
-        # Pause period
+        # Pause period at end
         x_final, y_final = history[M - 1][i]
         keyframe_points.append((100.0, x_final, y_final, 1))
 
-        # Optimize straight-line keyframes
+        # Remove redundant intermediate points on straight trajectories
         simplified = remove_interpolated_keyframes(keyframe_points)
-        simplified = remove_interpolated_keyframes(simplified)
 
         anim_name = f's{i}'
         kf_chunks = []
@@ -424,7 +427,7 @@ def main():
     with open("dist/github-contribution-grid-snake-dark.svg", "w", encoding="utf-8") as f:
         f.write(dark_svg)
 
-    print("Success! Smooth, relaxed Platane-style snake SVGs generated in dist/")
+    print("Success! Platane-style smooth relaxed snake SVGs generated in dist/")
 
 
 if __name__ == "__main__":

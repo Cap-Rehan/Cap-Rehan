@@ -17,14 +17,14 @@ Projects, experiments, notes, and whatever I'm currently learning.
 <picture>
   <source
     media="(prefers-color-scheme: dark)"
-    srcset="https://raw.githubusercontent.com/Cap-Rehan/Cap-Rehan/output/github-contribution-grid-snake-dark.svg?v=4"
+    srcset="https://raw.githubusercontent.com/Cap-Rehan/Cap-Rehan/output/github-contribution-grid-snake-dark.svg?v=5"
   />
   <source
     media="(prefers-color-scheme: light)"
-    srcset="https://raw.githubusercontent.com/Cap-Rehan/Cap-Rehan/output/github-contribution-grid-snake.svg?v=4"
+    srcset="https://raw.githubusercontent.com/Cap-Rehan/Cap-Rehan/output/github-contribution-grid-snake.svg?v=5"
   />
   <img
     alt="github contribution snake"
-    src="https://raw.githubusercontent.com/Cap-Rehan/Cap-Rehan/output/github-contribution-grid-snake.svg?v=4"
+    src="https://raw.githubusercontent.com/Cap-Rehan/Cap-Rehan/output/github-contribution-grid-snake.svg?v=5"
   />
 </picture>
