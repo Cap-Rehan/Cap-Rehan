@@ -4,7 +4,7 @@ Growing GitHub Contribution Snake Generator (Platane Style)
 - Pure Platane Architecture: Grid dots only transition from their contribution color to empty when eaten (never turn orange beforehand).
 - Scaled Growth: Snake starts at length 4 and grows +1 segment every 3 contribution dots eaten, reaching a sleek final length.
 - Smooth & relaxed animation: Continuous CSS keyframe translation gliding across the grid at natural pacing (165ms per tile).
-- Complete food consumption: 100% of contribution dots are eaten (including bottom-right cells).
+- Complete food consumption: 100% of contribution dots are guaranteed to be eaten (including bottom-right cells).
 - Clean finish: Stops cleanly immediately upon eating the last contribution, pauses for 2.2s, and repeats.
 - Sunset Fire / Amber palette: Vibrant orange/amber snake contrasting with green contribution tiles.
 - Zero self-collisions: Guaranteed safe movement with tail-reachability lookahead.
@@ -182,16 +182,18 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4, grow_every: int 
 
         if food_path and len(food_path) > 1:
             first_step = food_path[1]
-            will_grow = (first_step in foods) and ((eaten_count + 1) % grow_every == 0)
-
-            sim_body = deque(body)
-            sim_body.appendleft(first_step)
-            if not will_grow:
-                sim_body.pop()
-            sim_obstacles = set(list(sim_body)[:-1])
-
-            if get_path(first_step, {sim_body[-1]}, sim_obstacles) is not None:
+            if len(foods) <= 1:
                 chosen_move = first_step
+            else:
+                will_grow = (first_step in foods) and ((eaten_count + 1) % grow_every == 0)
+                sim_body = deque(body)
+                sim_body.appendleft(first_step)
+                if not will_grow:
+                    sim_body.pop()
+                sim_obstacles = set(list(sim_body)[:-1])
+
+                if get_path(first_step, {sim_body[-1]}, sim_obstacles) is not None or flood_fill_count(first_step, sim_obstacles) >= len(sim_body):
+                    chosen_move = first_step
 
         # 2. Path to tail if direct food route is blocked
         if chosen_move is None:
@@ -199,7 +201,11 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4, grow_every: int 
             if tail_path and len(tail_path) > 1:
                 chosen_move = tail_path[1]
 
-        # 3. Fallback: move into neighbor with maximum open flood fill space
+        # 3. Direct food path fallback
+        if chosen_move is None and food_path and len(food_path) > 1:
+            chosen_move = food_path[1]
+
+        # 4. Fallback: move into neighbor with maximum open flood fill space
         if chosen_move is None:
             valid_moves = [n for n in neighbors(head) if n not in body_obstacles]
             if valid_moves:
