@@ -23,11 +23,17 @@ Projects, experiments, notes, and whatever I'm currently learning.
 
 ### Data & Machine Learning
 <p align="center">
-  <img src="https://skillicons.dev/icons?i=numpy,pandas,sklearn,matplotlib,jupyter,tensorflow,opencv&perline=7" />
+  <img src="https://skillicons.dev/icons?i=sklearn,tensorflow,opencv&perline=3" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/NumPy-013243?style=flat-square&logo=numpy&logoColor=white" />
+  <img src="https://img.shields.io/badge/Pandas-150458?style=flat-square&logo=pandas&logoColor=white" />
+  <img src="https://img.shields.io/badge/Matplotlib-11557C?style=flat-square&logo=matplotlib&logoColor=white" />
+  <img src="https://img.shields.io/badge/Jupyter-F37626?style=flat-square&logo=jupyter&logoColor=white" />
 </p>
 
 ### Also Working With
-
 `AI / LLMs` · `REST APIs` · `Prompt Engineering` · `Context Engineering`  
 `macOS` · `Linux` · `Shell Scripting` · `CLI Tooling`  
 `Git Workflows` · `System Configuration`
