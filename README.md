@@ -34,9 +34,9 @@ Projects, experiments, notes, and whatever I'm currently learning.
 </p>
 
 ### Also Working With
-`AI / LLMs` · `REST APIs` · `Prompt Engineering` · `Context Engineering`  
-`macOS` · `Linux` · `Shell Scripting` · `CLI Tooling`  
-`Git Workflows` · `System Configuration`
+- `AI / LLMs` · `REST APIs` · `Prompt Engineering` · `Context Engineering`  
+- `macOS` · `Linux` · `Shell Scripting` · `CLI Tooling`  
+- `Git Workflows` · `System Configuration`
 
 ### Beyond code
 
