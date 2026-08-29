@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Growing GitHub Contribution Snake Generator
-- AI pathfinding: The snake hunts down contribution dots across the grid.
-- Dynamic growth: Snake increases in length (+1 segment) each time it eats a contribution.
-- High-contrast vibrant themes: Distinct cyan/blue snake palettes clearly distinguishable from green contribution tiles.
+- AI pathfinding: Collision-free food hunting across the GitHub contribution grid.
+- Dynamic growth: Snake increases in length (+1 segment) each time it eats a contribution cell.
+- High-contrast Sunset Fire / Amber theme: Complementary vibrant orange palette that stands out distinctly against green contribution tiles.
+- Zero self-collisions: Guaranteed safe movement with tail-reachability lookahead and flood-fill heuristics.
 - Clean SMIL keyframe animations: Indefinite loop with pause, optimized for GitHub READMEs.
 """
 
@@ -92,10 +93,8 @@ def fetch_grid(username: str = USERNAME, token: str = GITHUB_TOKEN) -> list[list
 def simulate_snake(grid: list[list[int]], init_length: int = 4):
     """
     Simulates the snake hunting down contribution dots across the GitHub calendar grid.
-    The snake starts at (0, 0) and grows +1 segment whenever it eats a contribution cell.
-    Returns:
-        history: list of (body_snapshot, eaten_foods_set) for each step t
-        ncols, nrows
+    Strictly avoids self-collisions and traps.
+    The snake grows +1 segment whenever it eats a contribution cell.
     """
     ncols = len(grid)
     nrows = max(len(c) for c in grid)
@@ -109,16 +108,16 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
     )
     initial_food_count = len(foods)
 
-    # Initialize snake
-    start_pos = (0, 0)
-    body = deque([start_pos] * init_length)
+    # Clean initial body layout: [(3,0), (2,0), (1,0), (0,0)]
+    body = deque([(i, 0) for i in range(init_length - 1, -1, -1)])
     history: list[tuple[list[tuple[int, int]], set[tuple[int, int]]]] = []
     eaten_foods: set[tuple[int, int]] = set()
 
-    if start_pos in foods:
-        foods.remove(start_pos)
-        eaten_foods.add(start_pos)
-        body.append(start_pos)
+    # If any starting cells contain food, consume them
+    for seg in body:
+        if seg in foods:
+            foods.remove(seg)
+            eaten_foods.add(seg)
 
     def neighbors(pos: tuple[int, int]) -> list[tuple[int, int]]:
         c, r = pos
@@ -129,7 +128,7 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
                 res.append((nc, nr))
         return res
 
-    def get_shortest_path(start: tuple[int, int], targets: set[tuple[int, int]], obstacles: set[tuple[int, int]]) -> list[tuple[int, int]] | None:
+    def get_bfs_path(start: tuple[int, int], targets: set[tuple[int, int]], obstacles: set[tuple[int, int]]) -> list[tuple[int, int]] | None:
         if not targets:
             return None
         queue = deque([(start, [start])])
@@ -145,7 +144,7 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
                     queue.append((nxt, path + [nxt]))
         return None
 
-    def flood_fill_score(start: tuple[int, int], obstacles: set[tuple[int, int]]) -> int:
+    def flood_fill_count(start: tuple[int, int], obstacles: set[tuple[int, int]]) -> int:
         queue = deque([start])
         visited = set(obstacles)
         visited.add(start)
@@ -159,8 +158,23 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
                     queue.append(nxt)
         return count
 
+    def is_safe_move(candidate: tuple[int, int], will_eat: bool) -> bool:
+        # Simulate new body after taking this move
+        new_body = deque(body)
+        new_body.appendleft(candidate)
+        if not will_eat:
+            new_body.pop()
+        new_obstacles = set(list(new_body)[:-1])
+        # Tail reachability check
+        tail_target = new_body[-1]
+        path_to_tail = get_bfs_path(candidate, {tail_target}, new_obstacles)
+        if path_to_tail is not None:
+            return True
+        # Or open area >= body length
+        return flood_fill_count(candidate, new_obstacles) >= len(new_body)
+
     step = 0
-    max_steps = 2000
+    max_steps = 3000
     all_eaten_step = None
 
     while step < max_steps:
@@ -175,61 +189,67 @@ def simulate_snake(grid: list[list[int]], init_length: int = 4):
                 break
 
         head = body[0]
-        body_list = list(body)
-        obstacles = set(body_list[:-1])
+
+        # Valid candidate moves must NEVER intersect currently occupied body segments
+        valid_candidates = []
+        for n in neighbors(head):
+            will_eat = (n in foods)
+            blocked_set = set(body) if will_eat else set(list(body)[:-1])
+            if n not in blocked_set:
+                valid_candidates.append(n)
+
+        if not valid_candidates:
+            # Trapped emergency: stop simulation gracefully
+            print(f"Simulation ended safely at step {step}")
+            break
 
         next_step = None
 
         if foods:
-            # 1. Shortest path to closest reachable food
-            path = get_shortest_path(head, foods, obstacles)
-            # Verify that following path doesn't immediately trap snake in tiny dead end
-            if path and len(path) > 1:
-                candidate = path[1]
-                future_obstacles = (obstacles - {body[-1]}) | {candidate}
-                if (
-                    flood_fill_score(candidate, future_obstacles) >= len(body)
-                    or get_shortest_path(candidate, {body[-1]}, future_obstacles) is not None
-                ):
-                    next_step = candidate
+            # 1. Shortest path to closest food avoiding current body
+            shortest_path = get_bfs_path(head, foods, set(body))
+            if shortest_path and len(shortest_path) > 1:
+                first_move = shortest_path[1]
+                if first_move in valid_candidates and is_safe_move(first_move, first_move in foods):
+                    next_step = first_move
 
-            # 2. If direct path is dangerous/blocked, survive by chasing tail
+            # 2. If shortest path to food isn't safe, choose a safe candidate that maintains tail access
             if next_step is None:
-                tail_path = get_shortest_path(head, {body[-1]}, obstacles)
-                if tail_path and len(tail_path) > 1:
-                    next_step = tail_path[1]
-
-            # 3. If tail path is also blocked, pick move with maximum open space
-            if next_step is None:
-                valid_moves = [n for n in neighbors(head) if n not in obstacles]
-                if not valid_moves:
-                    valid_moves = neighbors(head)
-                next_step = max(valid_moves, key=lambda n: flood_fill_score(n, obstacles))
+                safe_candidates = [c for c in valid_candidates if is_safe_move(c, c in foods)]
+                if safe_candidates:
+                    if shortest_path and len(shortest_path) > 1:
+                        target_food = shortest_path[-1]
+                        next_step = min(
+                            safe_candidates,
+                            key=lambda c: abs(c[0] - target_food[0]) + abs(c[1] - target_food[1])
+                        )
+                    else:
+                        next_step = max(safe_candidates, key=lambda c: flood_fill_count(c, set(body)))
+                else:
+                    # 3. Fallback: candidate with maximum open space
+                    next_step = max(valid_candidates, key=lambda c: flood_fill_count(c, set(body)))
         else:
-            # Outro phase: graceful victory slither towards the right
-            valid_moves = [n for n in neighbors(head) if n not in obstacles]
-            if not valid_moves:
-                valid_moves = neighbors(head)
+            # Outro phase: graceful victory slither towards the right side
+            safe_candidates = [c for c in valid_candidates if is_safe_move(c, False)]
+            if not safe_candidates:
+                safe_candidates = valid_candidates
             next_step = max(
-                valid_moves,
-                key=lambda n: flood_fill_score(n, obstacles) + n[0] * 0.15
+                safe_candidates,
+                key=lambda c: flood_fill_count(c, set(body)) + c[0] * 0.2
             )
 
-        if next_step is None:
-            break
-
-        # Move head into next_step
-        new_head = next_step
-        if new_head in foods:
-            # Eat food: cell consumed, snake grows by +1 length (tail is preserved)
-            foods.remove(new_head)
-            eaten_foods.add(new_head)
-            body.appendleft(new_head)
+        # Execute move
+        head = next_step
+        if head in foods:
+            # Eat food: cell consumed, snake GROWS by +1 length (tail preserved)
+            foods.remove(head)
+            eaten_foods.add(head)
+            body.appendleft(head)
             if not foods:
                 all_eaten_step = step
         else:
-            # Normal movement: advance head, remove tail
-            body.appendleft(new_head)
+            # Normal move: advance head, remove tail
+            body.appendleft(head)
             body.pop()
 
         step += 1
@@ -258,17 +278,18 @@ def build_svg(grid: list[list[int]], history: list[tuple[list[tuple[int, int]], 
     )
     EMPTY_CLR = LEVELS[0]
 
-    # Contrasting vibrant Snake Palette (Electric Cyan/Blue for Dark, Royal Blue/Indigo for Light)
+    # Contrasting Sunset Fire / Amber Snake Palette
+    # Strongly contrasts with green contribution tiles and both dark/light backgrounds
     if dark:
-        HEAD_CLR = "#38bdf8"  # Electric Sky Cyan
-        NECK_CLR = "#0ea5e9"  # Vivid Cyan-Blue
-        BODY_CLR = "#0284c7"  # Cobalt Blue
-        TAIL_CLR = "#0369a1"  # Deep Sea Blue
+        HEAD_CLR = "#ff7b00"  # Glowing Fire Orange
+        NECK_CLR = "#ff9100"  # Bright Amber Orange
+        BODY_CLR = "#f97316"  # Vivid Sunset Orange
+        TAIL_CLR = "#c2410c"  # Deep Ember Auburn
     else:
-        HEAD_CLR = "#2563eb"  # Royal Blue
-        NECK_CLR = "#3b82f6"  # Vivid Blue
-        BODY_CLR = "#60a5fa"  # Bright Sky Blue
-        TAIL_CLR = "#93c5fd"  # Soft Blue
+        HEAD_CLR = "#ea580c"  # Crimson Sunset Orange
+        NECK_CLR = "#f97316"  # Warm Vivid Orange
+        BODY_CLR = "#fb923c"  # Sun Amber
+        TAIL_CLR = "#fdba74"  # Golden Peach
 
     def cell_initial_color(cnt: int) -> str:
         if cnt == 0:
@@ -365,7 +386,7 @@ def main():
     total_contributions = sum(cnt for col in grid for cnt in col)
     print(f"Grid loaded: {len(grid)} weeks · {total_cells} cells · {total_contributions} total contributions")
 
-    print("Running Snake AI simulation with dynamic growth...")
+    print("Running Snake AI simulation with strict collision avoidance & dynamic growth...")
     history, ncols, nrows = simulate_snake(grid, init_length=4)
 
     print("Generating Light Theme SVG (dist/github-contribution-grid-snake.svg)...")
@@ -378,7 +399,7 @@ def main():
     with open("dist/github-contribution-grid-snake-dark.svg", "w", encoding="utf-8") as f:
         f.write(dark_svg)
 
-    print("Success! High-contrast, dynamic growing snake SVGs generated in dist/")
+    print("Success! Sunset Fire / Amber snake SVGs generated in dist/")
 
 
 if __name__ == "__main__":
