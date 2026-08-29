@@ -11,12 +11,19 @@ Projects, experiments, notes, and whatever I'm currently learning.
 
 ## Skills & Technologies
 
+### Languages
 <p align="center">
-  <img src="https://skillicons.dev/icons?i=c,cpp,python,javascript,html,css,bash&perline=8" />
-  <br>
-  <img src="https://skillicons.dev/icons?i=git,github,neovim,vscode,cmake,docker,linux,apple&perline=9" />
-  <br>
-  <img src="https://skillicons.dev/icons?i=numpy,pandas,sklearn,matplotlib,jupyter,tensorflow,opencv&perline=5" />
+  <img src="https://skillicons.dev/icons?i=c,cpp,python,javascript,html,css,bash&perline=7" />
+</p>
+
+### Tools & Platforms
+<p align="center">
+  <img src="https://skillicons.dev/icons?i=git,github,neovim,vscode,cmake,docker,linux,apple&perline=8" />
+</p>
+
+### Data & Machine Learning
+<p align="center">
+  <img src="https://skillicons.dev/icons?i=numpy,pandas,sklearn,matplotlib,jupyter,tensorflow,opencv&perline=7" />
 </p>
 
 ### Also Working With
