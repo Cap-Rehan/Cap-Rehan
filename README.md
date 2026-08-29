@@ -9,6 +9,22 @@ Projects, experiments, notes, and whatever I'm currently learning.
 - Improving my problem-solving skills
 - Learning something new every day
 
+## Skills & Technologies
+
+<p align="center">
+  <img src="https://skillicons.dev/icons?i=c,cpp,python,javascript,html,css,bash&perline=8" />
+  <br>
+  <img src="https://skillicons.dev/icons?i=git,github,neovim,vscode,cmake,docker,linux,apple&perline=9" />
+  <br>
+  <img src="https://skillicons.dev/icons?i=numpy,pandas,sklearn,matplotlib,jupyter,tensorflow,opencv&perline=5" />
+</p>
+
+### Also Working With
+
+`AI / LLMs` · `REST APIs` · `Prompt Engineering` · `Context Engineering`  
+`macOS` · `Linux` · `Shell Scripting` · `CLI Tooling`  
+`Git Workflows` · `System Configuration`
+
 ### Beyond code
 
 - Cinema lover
