@@ -4,11 +4,6 @@ CSE student • Chandigarh
 
 Projects, experiments, notes, and whatever I'm currently learning.
 
-## Current Focus
-- Building useful things
-- Improving my problem-solving skills
-- Learning something new every day
-
 ## Skills & Technologies
 
 ### Languages
